@@ -1,16 +1,30 @@
 // script.js
-import { getTasks, createTask, updateTask, deleteTask } from "./api.js";
 
 const columns = ["todoList", "doingList", "doneList"];
 
-// Carregar tarefas do backend
-window.addEventListener("DOMContentLoaded", async () => {
-  const tasks = await getTasks();
+// --- FUNÇÕES AUXILIARES DO LOCALSTORAGE ---
+
+// Carregar tarefas salvas no navegador
+function getTasksFromStorage() {
+  const tasks = localStorage.getItem("tasks");
+  return tasks ? JSON.parse(tasks) : [];
+}
+
+// Salvar a lista atualizada de tarefas no navegador
+function saveTasksToStorage(tasks) {
+  localStorage.setItem("tasks", JSON.stringify(tasks));
+}
+
+// --- FUNÇÕES PRINCIPAIS ---
+
+// Carregar tarefas ao abrir a página
+window.addEventListener("DOMContentLoaded", () => {
+  const tasks = getTasksFromStorage();
   tasks.forEach(task => renderTask(task));
 });
 
 // Adicionar tarefa
-document.getElementById("addBtn").addEventListener("click", async () => {
+document.getElementById("addBtn").addEventListener("click", () => {
   const input = document.getElementById("taskInput");
   const prioritySelect = document.getElementById("taskPriority");
   const text = input.value.trim();
@@ -18,15 +32,32 @@ document.getElementById("addBtn").addEventListener("click", async () => {
 
   if (!text) return alert("Digite uma tarefa!");
 
-  const newTask = await createTask({ text, column: "todoList", priority });
+  // Cria um objeto de tarefa simulando o ID do backend
+  const newTask = {
+    id: Date.now().toString(), // Gera um ID único baseado no tempo atual
+    text,
+    column: "todoList",
+    priority
+  };
+
+  // Salva no LocalStorage
+  const tasks = getTasksFromStorage();
+  tasks.push(newTask);
+  saveTasksToStorage(tasks);
+
+  // Renderiza na tela
   renderTask(newTask);
   input.value = "";
 });
 
-// Renderizar tarefa
+// Renderizar tarefa na tela
 function renderTask(task) {
   const { id, text, column, priority } = task;
   const ul = document.getElementById(column);
+  
+  // Evita renderizar se a coluna não existir no HTML
+  if (!ul) return; 
+
   const li = document.createElement("li");
   li.draggable = true;
   li.dataset.id = id;
@@ -38,57 +69,77 @@ function renderTask(task) {
   contentDiv.classList.add("task-content");
   contentDiv.textContent = text;
   contentDiv.contentEditable = true;
-  contentDiv.addEventListener("blur", async () => {
-    await updateTask(id, { text: contentDiv.textContent.trim() });
+  
+  // Atualizar texto ao clicar fora do card
+  contentDiv.addEventListener("blur", () => {
+    const updatedText = contentDiv.textContent.trim();
+    let tasks = getTasksFromStorage();
+    tasks = tasks.map(t => t.id === id ? { ...t, text: updatedText } : t);
+    saveTasksToStorage(tasks);
   });
   li.appendChild(contentDiv);
 
   // Tag de prioridade
   const tag = document.createElement("span");
   tag.classList.add("priority-tag", priority);
-  tag.textContent = priority[0].toUpperCase();
+  tag.textContent = priority ? priority[0].toUpperCase() : "N";
   li.appendChild(tag);
 
   // Botão excluir
   const delBtn = document.createElement("button");
   delBtn.textContent = "🗑️";
-  delBtn.onclick = async () => {
+  delBtn.onclick = () => {
     li.remove();
-    await deleteTask(id);
+    // Remove do LocalStorage
+    let tasks = getTasksFromStorage();
+    tasks = tasks.filter(t => t.id !== id);
+    saveTasksToStorage(tasks);
   };
   li.appendChild(delBtn);
 
-  // Drag & Drop
+  // Drag & Drop do Card (Fim do movimento)
   li.addEventListener("dragstart", () => li.classList.add("dragging"));
-  li.addEventListener("dragend", async () => {
+  li.addEventListener("dragend", () => {
     li.classList.remove("dragging");
-    const newColumn = li.dataset.column;
-    await updateTask(id, { column: newColumn });
+    
+    // Pequeno delay para garantir que o 'drop' da coluna atualizou o dataset primeiro
+    setTimeout(() => {
+      const newColumn = li.dataset.column;
+      let tasks = getTasksFromStorage();
+      tasks = tasks.map(t => t.id === id ? { ...t, column: newColumn } : t);
+      saveTasksToStorage(tasks);
+    }, 50);
   });
 
   setCardColor(li, column);
   ul.appendChild(li);
 }
 
-// Drag & Drop
+// --- CONFIGURAÇÃO DO DRAG & DROP NAS COLUNAS ---
 columns.forEach(id => {
   const ul = document.getElementById(id);
+  if (!ul) return;
 
   ul.addEventListener("dragover", e => {
     e.preventDefault();
     const dragging = document.querySelector(".dragging");
+    if (!dragging) return;
+    
     const afterElement = getDragAfterElement(ul, e.clientY);
-    if (!afterElement) ul.appendChild(dragging);
-    else ul.insertBefore(dragging, afterElement);
+    if (!afterElement) {
+      ul.appendChild(dragging);
+    } else {
+      ul.insertBefore(dragging, afterElement);
+    }
   });
 
   ul.addEventListener("drop", e => {
     e.preventDefault();
     const dragging = document.querySelector(".dragging");
     if (!dragging) return;
+    
     const newColumn = ul.id;
     dragging.dataset.column = newColumn;
-    ul.appendChild(dragging);
     setCardColor(dragging, newColumn);
   });
 });
@@ -98,8 +149,11 @@ function getDragAfterElement(container, y) {
   return draggableElements.reduce((closest, child) => {
     const box = child.getBoundingClientRect();
     const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset) return { offset, element: child };
-    else return closest;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset, element: child };
+    } else {
+      return closest;
+    }
   }, { offset: Number.NEGATIVE_INFINITY }).element;
 }
 
